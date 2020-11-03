@@ -6,6 +6,7 @@ from spikeextractors.extraction_tools import check_valid_unit_id
 
 try:
     import h5py
+    import scipy
     HAVE_SCSX = True
 except ImportError:
     HAVE_SCSX = False
@@ -56,40 +57,53 @@ class SpykingCircusSortingExtractor(SortingExtractor):
     installed = HAVE_SCSX  # check at class level if installed or not
     is_writable = True
     mode = 'folder'
-    installation_mesg = "To use the SpykingCircusSortingExtractor install h5py: \n\n pip install h5py\n\n"
+    installation_mesg = "To use the SpykingCircusSortingExtractor install h5py and scipy: " \
+                        "\n\n pip install h5py scipy\n\n"
 
-    def __init__(self, folder_path):
+    def __init__(self, file_or_folder_path, load_templates=True):
         assert HAVE_SCSX, self.installation_mesg
         SortingExtractor.__init__(self)
-        spykingcircus_folder = Path(folder_path)
-        listfiles = spykingcircus_folder.iterdir()
+        file_or_folder_path = Path(file_or_folder_path)
+
         results = None
         sample_rate = None
 
         parent_folder = None
         result_folder = None
-        for f in listfiles:
-            if f.is_dir():
-                if any([f_.suffix == '.hdf5' for f_ in f.iterdir()]):
-                    parent_folder = spykingcircus_folder
-                    result_folder = f
 
-        if parent_folder is None:
-            parent_folder = spykingcircus_folder.parent
-            for f in parent_folder.iterdir():
+        if file_or_folder_path.is_dir():
+            spykingcircus_folder = file_or_folder_path
+            listfiles = spykingcircus_folder.iterdir()
+
+            for f in listfiles:
                 if f.is_dir():
-                    if any([f_.suffix == '.hdf5' for f_ in f.iterdir()]):
-                        result_folder = spykingcircus_folder
+                    if any([f_.suffix in ['.hdf5', '.h5'] for f_ in f.iterdir()]):
+                        parent_folder = spykingcircus_folder
+                        result_folder = f
 
-        assert isinstance(parent_folder, Path) and isinstance(result_folder, Path), "Not a valid spyking circus folder"
+            if parent_folder is None:
+                parent_folder = spykingcircus_folder.parent
+                for f in parent_folder.iterdir():
+                    if f.is_dir():
+                        if any([f_.suffix == '.hdf5' for f_ in f.iterdir()]):
+                            result_folder = spykingcircus_folder
 
-        # load files
-        for f in result_folder.iterdir():
-            if 'result.hdf5' in str(f):
-                results = f
-            if 'result-merged.hdf5' in str(f):
-                results = f
-                break
+            assert isinstance(parent_folder, Path) and isinstance(result_folder, Path), \
+                "Not a valid spyking circus folder"
+
+            # load files
+            for f in result_folder.iterdir():
+                if 'result.hdf5' in str(f):
+                    results = f
+                if 'result-merged.hdf5' in str(f):
+                    results = f
+                    break
+        else:
+            results = file_or_folder_path
+            assert results.suffix in ['.hdf5', '.h5'], "file path should be an hdf5 file"
+
+            result_folder = results.parent
+            parent_folder = result_folder.parent
 
         # load params
         for f in parent_folder.iterdir():
@@ -100,7 +114,8 @@ class SpykingCircusSortingExtractor(SortingExtractor):
             self._sampling_frequency = sample_rate
 
         if results is None:
-            raise Exception(spykingcircus_folder, " is not a spyking circus folder")
+            raise Exception(f"{file_or_folder_path} is not a spyking circus file or folder")
+
         f_results = h5py.File(results, 'r')
         self._spiketrains = []
         self._unit_ids = []
@@ -108,7 +123,35 @@ class SpykingCircusSortingExtractor(SortingExtractor):
             self._spiketrains.append(np.array(f_results['spiketimes'][temp]).astype('int64'))
             self._unit_ids.append(int(temp.split('_')[-1]))
 
-        self._kwargs = {'folder_path': str(Path(folder_path).absolute())}
+        if load_templates:
+            data_name = str(results.name).split('.')[0]
+            results_name = str(results.name).split('.')[-2]
+            results_start_idx = results_name.find('result')
+            results_name = results_name[results_start_idx + len('result'):]
+            template_file = result_folder / f"{data_name}.templates{results_name}.hdf5"
+            print(template_file)
+            if template_file.is_file():
+                with h5py.File(template_file, 'r', libver='earliest') as myfile:
+                    temp_x = myfile.get('temp_x')[:].ravel()
+                    temp_y = myfile.get('temp_y')[:].ravel()
+                    temp_data = myfile.get('temp_data')[:].ravel()
+                    N_e, N_t, nb_templates = myfile.get('temp_shape')[:].ravel().astype(np.int32)
+                templates = scipy.sparse.csc_matrix((temp_data, (temp_x, temp_y)), shape=(N_e * N_t, nb_templates))
+                print(templates.shape)
+                templates_reshaped = np.array([templates[:, i].toarray().reshape(N_e, N_t)
+                                               for i in np.arange(templates.shape[-1])])
+                print(templates_reshaped.shape)
+
+                if templates_reshaped.shape[-1] != len(self._unit_ids):
+                    for i_u, u in enumerate(self.get_unit_ids()):
+                        self.set_unit_property(u, 'template', templates[:, :, i_u])
+                else:
+                    print("Number of templates does not correspond to number of units and could not be loaded.")
+            else:
+                print("Couldn't find templates file")
+
+        self._kwargs = {'file_or_folder_path': str(Path(file_or_folder_path).absolute()),
+                        'load_templates': load_templates}
 
     def get_unit_ids(self):
         return list(self._unit_ids)
