@@ -32,6 +32,9 @@ class Mea1kRecordingExtractor(RecordingExtractor):
         self._initialize()
         self._kwargs = {'file_path': str(Path(file_path).absolute())}
 
+    def __del__(self):
+        self._filehandle.close()
+
     def _initialize(self):
         self._filehandle = h5py.File(self._file_path, mode='r')
         try:

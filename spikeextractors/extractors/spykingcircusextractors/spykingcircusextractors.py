@@ -129,7 +129,7 @@ class SpykingCircusSortingExtractor(SortingExtractor):
             results_start_idx = results_name.find('result')
             results_name = results_name[results_start_idx + len('result'):]
             template_file = result_folder / f"{data_name}.templates{results_name}.hdf5"
-            print(template_file)
+
             if template_file.is_file():
                 with h5py.File(template_file, 'r', libver='earliest') as myfile:
                     temp_x = myfile.get('temp_x')[:].ravel()
@@ -137,16 +137,12 @@ class SpykingCircusSortingExtractor(SortingExtractor):
                     temp_data = myfile.get('temp_data')[:].ravel()
                     N_e, N_t, nb_templates = myfile.get('temp_shape')[:].ravel().astype(np.int32)
                 templates = scipy.sparse.csc_matrix((temp_data, (temp_x, temp_y)), shape=(N_e * N_t, nb_templates))
-                print(templates.shape)
                 templates_reshaped = np.array([templates[:, i].toarray().reshape(N_e, N_t)
                                                for i in np.arange(templates.shape[-1])])
-                print(templates_reshaped.shape)
-
-                if templates_reshaped.shape[-1] != len(self._unit_ids):
-                    for i_u, u in enumerate(self.get_unit_ids()):
-                        self.set_unit_property(u, 'template', templates[:, :, i_u])
-                else:
-                    print("Number of templates does not correspond to number of units and could not be loaded.")
+                assert len(templates_reshaped) // 2 == len(self._unit_ids), "Number of templates does not correspond to " \
+                                                                            "number of units and could not be loaded."
+                for i_u, u in enumerate(self.get_unit_ids()):
+                    self.set_unit_property(u, 'template', templates_reshaped[i_u])
             else:
                 print("Couldn't find templates file")
 
