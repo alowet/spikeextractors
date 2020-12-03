@@ -145,7 +145,7 @@ def _parse_spikeglx_metafile(metafile):
     tot_channels = None
     ap_channels = None
     lfp_channels = None
-    x_pitch = 21
+    x_pitch = 32
     y_pitch = 20
 
     locations = []
